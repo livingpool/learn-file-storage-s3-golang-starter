@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"mime"
@@ -64,7 +66,14 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	assetPath := getAssetPath(videoID, mediaType)
+	randBytes := make([]byte, 32)
+	if _, err := rand.Read(randBytes); err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Generating rand bytes failed", err)
+		return
+	}
+	randStr := base64.RawURLEncoding.EncodeToString(randBytes)
+
+	assetPath := getAssetPath(randStr, mediaType)
 	assetDiskPath := cfg.getAssetDiskPath(assetPath)
 
 	dst, err := os.Create(assetDiskPath)
