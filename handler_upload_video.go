@@ -1,13 +1,18 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
+	"fmt"
 	"io"
+	"math"
 	"mime"
 	"net/http"
 	"os"
+	"os/exec"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
@@ -81,6 +86,13 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 
 	io.Copy(tempFile, file)
 
+	// Get the video aspect ratio of the video from the tempFile
+	ratio, err := getVideoAspectRatio(tempFile.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't parse video aspect ratio", err)
+		return
+	}
+
 	// Reset the tempFile's file pointer to the beginning
 	tempFile.Seek(0, io.SeekStart)
 
@@ -91,6 +103,16 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	fileKey := getAssetPath(hex.EncodeToString(randBytes), mediaType)
+
+	switch ratio {
+	case "16:9":
+		fileKey = "landscape/" + fileKey
+	case "9:16":
+		fileKey = "portrait/" + fileKey
+	default:
+		fileKey = "other/" + fileKey
+	}
+
 	_, err = cfg.s3Client.PutObject(context.TODO(), &s3.PutObjectInput{
 		Bucket:      &cfg.s3Bucket,
 		Key:         &fileKey,
@@ -112,4 +134,48 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	}
 
 	respondWithJSON(w, http.StatusOK, vid)
+}
+
+func getVideoAspectRatio(filePath string) (string, error) {
+	cmd := exec.Command("ffprobe",
+		"-v", "error",
+		"-print_format", "json",
+		"-show_streams", filePath,
+	)
+	buf := bytes.NewBuffer([]byte{})
+	cmd.Stdout = buf
+
+	err := cmd.Run()
+	if err != nil {
+		return "", fmt.Errorf("ffprobe error: %v", err)
+	}
+
+	var output struct {
+		Streams []struct {
+			Width  int `json:"width"`
+			Height int `json:"height"`
+		} `json:"streams"`
+	}
+	err = json.Unmarshal(buf.Bytes(), &output)
+	if err != nil {
+		return "", fmt.Errorf("could not parse ffprobe output: %v", err)
+	}
+	if len(output.Streams) == 0 {
+		return "", fmt.Errorf("Parsed video stream is empty")
+	}
+
+	width := output.Streams[0].Width
+	height := output.Streams[0].Height
+	ratio := float64(width) / float64(height)
+
+	const horizontal = 16.0 / 9.0
+	const vertical = 9.0 / 16.0
+
+	if math.Abs(ratio-horizontal) <= 0.01 {
+		return "16:9", nil
+	} else if math.Abs(ratio-vertical) <= 0.01 {
+		return "9:16", nil
+	} else {
+		return "other", nil
+	}
 }
