@@ -13,7 +13,6 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
@@ -141,18 +140,11 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Update the VideoURL of the video record in the database with the S3 bucket and key
-	url := strings.Join([]string{cfg.s3Bucket, fileKey}, ",")
+	url := cfg.getCloudFrontURL(fileKey)
 	vid.VideoURL = &url
 
 	if err := cfg.db.UpdateVideo(vid); err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Unable to update video", err)
-		return
-	}
-
-	// Return Presigned video
-	vid, err = cfg.dbVideoToSignedVideo(vid)
-	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Couldn't generate presigned URL", err)
 		return
 	}
 
